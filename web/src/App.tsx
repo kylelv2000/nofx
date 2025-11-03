@@ -6,7 +6,6 @@ import { AITradersPage } from './components/AITradersPage';
 import { LoginPage } from './components/LoginPage';
 import { RegisterPage } from './components/RegisterPage';
 import { CompetitionPage } from './components/CompetitionPage';
-import { LandingPage } from './pages/LandingPage';
 import AILearning from './components/AILearning';
 import { LanguageProvider, useLanguage } from './contexts/LanguageContext';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
@@ -178,7 +177,7 @@ function App() {
     );
   }
 
-  // Show landing page for root route when not authenticated
+  // Redirect to login page when not authenticated
   if (!systemConfig?.admin_mode && (!user || !token)) {
     if (route === '/login') {
       return <LoginPage />;
@@ -186,8 +185,8 @@ function App() {
     if (route === '/register') {
       return <RegisterPage />;
     }
-    // Default to landing page when not authenticated
-    return <LandingPage />;
+    // Default to login page when not authenticated
+    return <LoginPage />;
   }
 
   return (

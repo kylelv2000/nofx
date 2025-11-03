@@ -153,6 +153,9 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
   const handleEditTrader = async (traderId: string) => {
     try {
       const traderConfig = await api.getTraderConfig(traderId);
+      console.log('📝 获取到的交易员配置:', traderConfig);
+      console.log('📝 scan_interval_minutes:', traderConfig.scan_interval_minutes);
+      console.log('📝 system_prompt_template:', traderConfig.system_prompt_template);
       setEditingTrader(traderConfig);
       setShowEditModal(true);
     } catch (error) {
@@ -183,6 +186,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
         ai_model_id: data.ai_model_id,
         exchange_id: data.exchange_id,
         initial_balance: data.initial_balance,
+        scan_interval_minutes: data.scan_interval_minutes,
         btc_eth_leverage: data.btc_eth_leverage,
         altcoin_leverage: data.altcoin_leverage,
         trading_symbols: data.trading_symbols,

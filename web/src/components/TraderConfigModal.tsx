@@ -12,6 +12,8 @@ interface TraderConfigData {
   trader_name: string;
   ai_model: string;
   exchange_id: string;
+  initial_balance: number;
+  scan_interval_minutes: number;
   btc_eth_leverage: number;
   altcoin_leverage: number;
   trading_symbols: string;
@@ -21,7 +23,6 @@ interface TraderConfigData {
   is_cross_margin: boolean;
   use_coin_pool: boolean;
   use_oi_top: boolean;
-  initial_balance: number;
 }
 
 interface TraderConfigModalProps {
@@ -47,6 +48,8 @@ export function TraderConfigModal({
     trader_name: '',
     ai_model: '',
     exchange_id: '',
+    initial_balance: 1000,
+    scan_interval_minutes: 3,
     btc_eth_leverage: 5,
     altcoin_leverage: 3,
     trading_symbols: '',
@@ -56,7 +59,6 @@ export function TraderConfigModal({
     is_cross_margin: true,
     use_coin_pool: false,
     use_oi_top: false,
-    initial_balance: 1000,
   });
   const [isSaving, setIsSaving] = useState(false);
   const [availableCoins, setAvailableCoins] = useState<string[]>([]);
@@ -66,7 +68,20 @@ export function TraderConfigModal({
 
   useEffect(() => {
     if (traderData) {
-      setFormData(traderData);
+      console.log('🎨 TraderConfigModal 收到的 traderData:', traderData);
+      console.log('🎨 scan_interval_minutes:', traderData.scan_interval_minutes);
+      console.log('🎨 system_prompt_template:', traderData.system_prompt_template);
+      
+      // 确保旧数据有默认值
+      const dataWithDefaults = {
+        ...traderData,
+        scan_interval_minutes: traderData.scan_interval_minutes || 3,
+        system_prompt_template: traderData.system_prompt_template || 'default'
+      };
+      
+      console.log('🎨 处理后的 dataWithDefaults:', dataWithDefaults);
+      setFormData(dataWithDefaults);
+      
       // 设置已选择的币种
       if (traderData.trading_symbols) {
         const coins = traderData.trading_symbols.split(',').map(s => s.trim()).filter(s => s);
@@ -77,6 +92,8 @@ export function TraderConfigModal({
         trader_name: '',
         ai_model: availableModels[0]?.id || '',
         exchange_id: availableExchanges[0]?.id || '',
+        initial_balance: 1000,
+        scan_interval_minutes: 3,
         btc_eth_leverage: 5,
         altcoin_leverage: 3,
         trading_symbols: '',
@@ -86,15 +103,7 @@ export function TraderConfigModal({
         is_cross_margin: true,
         use_coin_pool: false,
         use_oi_top: false,
-        initial_balance: 1000,
       });
-    }
-    // 确保旧数据也有默认的 system_prompt_template
-    if (traderData && !traderData.system_prompt_template) {
-      setFormData(prev => ({
-        ...prev,
-        system_prompt_template: 'default'
-      }));
     }
   }, [traderData, isEditMode, availableModels, availableExchanges]);
 
@@ -171,6 +180,8 @@ export function TraderConfigModal({
         name: formData.trader_name,
         ai_model_id: formData.ai_model,
         exchange_id: formData.exchange_id,
+        initial_balance: formData.initial_balance,
+        scan_interval_minutes: formData.scan_interval_minutes,
         btc_eth_leverage: formData.btc_eth_leverage,
         altcoin_leverage: formData.altcoin_leverage,
         trading_symbols: formData.trading_symbols,
@@ -180,7 +191,6 @@ export function TraderConfigModal({
         is_cross_margin: formData.is_cross_margin,
         use_coin_pool: formData.use_coin_pool,
         use_oi_top: formData.use_oi_top,
-        initial_balance: formData.initial_balance,
       };
       await onSave(saveData);
       onClose();
@@ -319,7 +329,23 @@ export function TraderConfigModal({
                 </div>
               </div>
 
-              {/* 第二行：杠杆设置 */}
+              {/* 第二行：API调用间隔 */}
+              <div>
+                <label className="text-sm text-[#EAECEF] block mb-2">
+                  API调用间隔 (分钟)
+                  <span className="text-xs text-[#848E9C] ml-2">建议3-5分钟，避免过度交易</span>
+                </label>
+                <input
+                  type="number"
+                  value={formData.scan_interval_minutes}
+                  onChange={(e) => handleInputChange('scan_interval_minutes', Number(e.target.value))}
+                  className="w-full px-3 py-2 bg-[#0B0E11] border border-[#2B3139] rounded text-[#EAECEF] focus:border-[#F0B90B] focus:outline-none"
+                  min="1"
+                  max="60"
+                />
+              </div>
+
+              {/* 第三行：杠杆设置 */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="text-sm text-[#EAECEF] block mb-2">BTC/ETH 杠杆</label>
@@ -345,7 +371,7 @@ export function TraderConfigModal({
                 </div>
               </div>
 
-              {/* 第三行：交易币种 */}
+              {/* 第四行：交易币种 */}
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <label className="text-sm text-[#EAECEF]">交易币种 (用逗号分隔，留空使用默认)</label>
