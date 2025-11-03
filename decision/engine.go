@@ -74,10 +74,10 @@ type Decision struct {
 	Action          string  `json:"action"` // "open_long", "open_short", "close_long", "close_short", "hold", "wait"
 	Leverage        int     `json:"leverage,omitempty"`
 	PositionSizeUSD float64 `json:"position_size_usd,omitempty"`
-	StopLoss        float64 `json:"stop_loss,omitempty"`
-	TakeProfit      float64 `json:"take_profit,omitempty"`
-	Confidence      int     `json:"confidence,omitempty"` // 信心度 (0-100)
-	RiskUSD         float64 `json:"risk_usd,omitempty"`   // 最大美元风险
+	StopLoss        float64 `json:"stop_loss,omitempty"`   // 止损价格（开仓或hold时更新）
+	TakeProfit      float64 `json:"take_profit,omitempty"` // 止盈价格（开仓或hold时更新）
+	Confidence      int     `json:"confidence,omitempty"`  // 信心度 (0-100)
+	RiskUSD         float64 `json:"risk_usd,omitempty"`    // 最大美元风险
 	Reasoning       string  `json:"reasoning"`
 }
 
@@ -280,7 +280,10 @@ func buildSystemPrompt(accountEquity float64, btcEthLeverage, altcoinLeverage in
 	sb.WriteString("字段说明:\n")
 	sb.WriteString("- `action`: open_long | open_short | close_long | close_short | hold | wait\n")
 	sb.WriteString("- `confidence`: 0-100（开仓建议≥75）\n")
-	sb.WriteString("- 开仓时必填: leverage, position_size_usd, stop_loss, take_profit, confidence, risk_usd, reasoning\n\n")
+	sb.WriteString("- 开仓时必填: leverage, position_size_usd, stop_loss, take_profit, confidence, risk_usd, reasoning\n")
+	sb.WriteString("- hold时可选填: stop_loss, take_profit（如你觉得需要调整止盈止损）\n\n")
+	sb.WriteString("- 止盈止损会提交到交易所自动触发，不受API延时影响\n")
+	sb.WriteString("- hold时如你觉得需要调整止盈止损，填写新的stop_loss和take_profit即可\n\n")
 
 	return sb.String()
 }
@@ -500,6 +503,77 @@ func findMatchingBracket(s string, start int) int {
 	return -1
 }
 
+// NormalizeAndValidateStopLossTakeProfit 规范化和验证止盈止损
+// 开仓时必须提供，hold时可选
+func NormalizeAndValidateStopLossTakeProfit(d *Decision, currentPrice float64) error {
+	if d.Action != "open_long" && d.Action != "open_short" && d.Action != "hold" {
+		return nil // 其他操作不需要止盈止损
+	}
+
+	// hold时如果没提供就不更新，直接返回
+	if d.Action == "hold" && d.StopLoss <= 0 && d.TakeProfit <= 0 {
+		return nil
+	}
+
+	// 开仓时必须提供止盈止损（保持原有逻辑）
+	if d.Action == "open_long" || d.Action == "open_short" {
+		if d.StopLoss <= 0 || d.TakeProfit <= 0 {
+			return fmt.Errorf("开仓时必须提供止损和止盈价格")
+		}
+	}
+
+	// 验证止盈止损合法性
+	// 1. 验证方向是否正确
+	if d.Action == "open_long" || (d.Action == "hold" && d.StopLoss > 0) {
+		if d.StopLoss >= currentPrice {
+			return fmt.Errorf("做多止损价(%.2f)必须<当前价(%.2f)", d.StopLoss, currentPrice)
+		}
+		if d.TakeProfit <= currentPrice {
+			return fmt.Errorf("做多止盈价(%.2f)必须>当前价(%.2f)", d.TakeProfit, currentPrice)
+		}
+	} else if d.Action == "open_short" || (d.Action == "hold" && d.StopLoss > 0) {
+		if d.StopLoss <= currentPrice {
+			return fmt.Errorf("做空止损价(%.2f)必须>当前价(%.2f)", d.StopLoss, currentPrice)
+		}
+		if d.TakeProfit >= currentPrice {
+			return fmt.Errorf("做空止盈价(%.2f)必须<当前价(%.2f)", d.TakeProfit, currentPrice)
+		}
+	}
+
+	// 2. 计算风险回报比
+	var riskPercent, rewardPercent float64
+	if d.Action == "open_long" {
+		riskPercent = (currentPrice - d.StopLoss) / currentPrice * 100
+		rewardPercent = (d.TakeProfit - currentPrice) / currentPrice * 100
+	} else {
+		riskPercent = (d.StopLoss - currentPrice) / currentPrice * 100
+		rewardPercent = (currentPrice - d.TakeProfit) / currentPrice * 100
+	}
+
+	riskRewardRatio := 0.0
+	if riskPercent > 0 {
+		riskRewardRatio = rewardPercent / riskPercent
+	}
+
+	// 3. 验证风险回报比：必须≥3:1（保持原有策略）
+	if riskRewardRatio < 3.0 {
+		return fmt.Errorf("风险回报比过低(%.2f:1)，必须≥3:1 [风险:%.2f%% 收益:%.2f%%]", riskRewardRatio, riskPercent, rewardPercent)
+	}
+
+	// 4. 验证止损不能超过10%，止盈不能超过50%
+	if riskPercent > 10.0 {
+		return fmt.Errorf("止损%.2f%%过大，不能超过10%%", riskPercent)
+	}
+
+	if rewardPercent > 50.0 {
+		return fmt.Errorf("止盈%.2f%%过大，不能超过50%%", rewardPercent)
+	}
+
+	// 通过所有验证
+	log.Printf("  ✓ 止盈止损验证通过: 风险%.2f%% 收益%.2f%% (%.2f:1)", riskPercent, rewardPercent, riskRewardRatio)
+	return nil
+}
+
 // validateDecision 验证单个决策的有效性
 func validateDecision(d *Decision, accountEquity float64, btcEthLeverage, altcoinLeverage int) error {
 	// 验证action
@@ -541,52 +615,9 @@ func validateDecision(d *Decision, accountEquity float64, btcEthLeverage, altcoi
 				return fmt.Errorf("山寨币单币种仓位价值不能超过%.0f USDT（1.5倍账户净值），实际: %.0f", maxPositionValue, d.PositionSizeUSD)
 			}
 		}
-		if d.StopLoss <= 0 || d.TakeProfit <= 0 {
-			return fmt.Errorf("止损和止盈必须大于0")
-		}
 
-		// 验证止损止盈的合理性
-		if d.Action == "open_long" {
-			if d.StopLoss >= d.TakeProfit {
-				return fmt.Errorf("做多时止损价必须小于止盈价")
-			}
-		} else {
-			if d.StopLoss <= d.TakeProfit {
-				return fmt.Errorf("做空时止损价必须大于止盈价")
-			}
-		}
-
-		// 验证风险回报比（必须≥1:3）
-		// 计算入场价（假设当前市价）
-		var entryPrice float64
-		if d.Action == "open_long" {
-			// 做多：入场价在止损和止盈之间
-			entryPrice = d.StopLoss + (d.TakeProfit-d.StopLoss)*0.2 // 假设在20%位置入场
-		} else {
-			// 做空：入场价在止损和止盈之间
-			entryPrice = d.StopLoss - (d.StopLoss-d.TakeProfit)*0.2 // 假设在20%位置入场
-		}
-
-		var riskPercent, rewardPercent, riskRewardRatio float64
-		if d.Action == "open_long" {
-			riskPercent = (entryPrice - d.StopLoss) / entryPrice * 100
-			rewardPercent = (d.TakeProfit - entryPrice) / entryPrice * 100
-			if riskPercent > 0 {
-				riskRewardRatio = rewardPercent / riskPercent
-			}
-		} else {
-			riskPercent = (d.StopLoss - entryPrice) / entryPrice * 100
-			rewardPercent = (entryPrice - d.TakeProfit) / entryPrice * 100
-			if riskPercent > 0 {
-				riskRewardRatio = rewardPercent / riskPercent
-			}
-		}
-
-		// 硬约束：风险回报比必须≥3.0
-		if riskRewardRatio < 3.0 {
-			return fmt.Errorf("风险回报比过低(%.2f:1)，必须≥3.0:1 [风险:%.2f%% 收益:%.2f%%] [止损:%.2f 止盈:%.2f]",
-				riskRewardRatio, riskPercent, rewardPercent, d.StopLoss, d.TakeProfit)
-		}
+		// 注意：止损止盈验证已移到 NormalizeAndValidateStopLossTakeProfit 函数
+		// 这里不做验证，允许LLM不填写（使用默认值）或填写合理的值
 	}
 
 	return nil
