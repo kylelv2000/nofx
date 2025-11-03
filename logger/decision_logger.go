@@ -272,20 +272,22 @@ type Statistics struct {
 
 // TradeOutcome 单笔交易结果
 type TradeOutcome struct {
-	Symbol        string    `json:"symbol"`         // 币种
-	Side          string    `json:"side"`           // long/short
-	Quantity      float64   `json:"quantity"`       // 仓位数量
-	Leverage      int       `json:"leverage"`       // 杠杆倍数
-	OpenPrice     float64   `json:"open_price"`     // 开仓价
-	ClosePrice    float64   `json:"close_price"`    // 平仓价
-	PositionValue float64   `json:"position_value"` // 仓位价值（quantity × openPrice）
-	MarginUsed    float64   `json:"margin_used"`    // 保证金使用（positionValue / leverage）
-	PnL           float64   `json:"pn_l"`           // 盈亏（USDT）
-	PnLPct        float64   `json:"pn_l_pct"`       // 盈亏百分比（相对保证金）
-	Duration      string    `json:"duration"`       // 持仓时长
-	OpenTime      time.Time `json:"open_time"`      // 开仓时间
-	CloseTime     time.Time `json:"close_time"`     // 平仓时间
-	WasStopLoss   bool      `json:"was_stop_loss"`  // 是否止损
+	Symbol          string    `json:"symbol"`            // 币种
+	Side            string    `json:"side"`              // long/short
+	Quantity        float64   `json:"quantity"`          // 仓位数量
+	Leverage        int       `json:"leverage"`          // 杠杆倍数
+	OpenPrice       float64   `json:"open_price"`        // 开仓价
+	ClosePrice      float64   `json:"close_price"`       // 平仓价
+	PositionValue   float64   `json:"position_value"`    // 仓位价值（quantity × openPrice）
+	MarginUsed      float64   `json:"margin_used"`       // 保证金使用（positionValue / leverage）
+	PnL             float64   `json:"pn_l"`              // 盈亏（USDT）
+	PnLPct          float64   `json:"pn_l_pct"`          // 盈亏百分比（相对保证金）
+	Duration        string    `json:"duration"`          // 持仓时长
+	OpenTime        time.Time `json:"open_time"`         // 开仓时间
+	CloseTime       time.Time `json:"close_time"`        // 平仓时间
+	WasStopLoss     bool      `json:"was_stop_loss"`     // 是否止损
+	StopLossPrice   float64   `json:"stop_loss_price"`   // 开仓时设置的止损价格
+	TakeProfitPrice float64   `json:"take_profit_price"` // 开仓时设置的止盈价格
 }
 
 // PerformanceAnalysis 交易表现分析
@@ -357,22 +359,38 @@ func (l *DecisionLogger) AnalyzePerformance(lookbackCycles int) (*PerformanceAna
 				}
 				posKey := symbol + "_" + side
 
-				switch action.Action {
-				case "open_long", "open_short":
-					// 记录开仓
-					openPositions[posKey] = map[string]interface{}{
-						"side":      side,
-						"openPrice": action.Price,
-						"openTime":  action.Timestamp,
-						"quantity":  action.Quantity,
-						"leverage":  action.Leverage,
+			switch action.Action {
+			case "open_long", "open_short":
+				// 记录开仓（包括止损止盈价格）
+				openPositions[posKey] = map[string]interface{}{
+					"side":            side,
+					"openPrice":       action.Price,
+					"openTime":        action.Timestamp,
+					"quantity":        action.Quantity,
+					"leverage":        action.Leverage,
+					"stopLossPrice":   action.StopLossPrice,
+					"takeProfitPrice": action.TakeProfitPrice,
+				}
+			case "close_long", "close_short":
+				// 移除已平仓记录
+				delete(openPositions, posKey)
+
+			case "hold":
+				// hold 操作可能更新止损止盈价格
+				if action.StopLossPrice > 0 || action.TakeProfitPrice > 0 {
+					if openPos, exists := openPositions[posKey]; exists {
+						// 更新止损止盈价格
+						if action.StopLossPrice > 0 {
+							openPos["stopLossPrice"] = action.StopLossPrice
+						}
+						if action.TakeProfitPrice > 0 {
+							openPos["takeProfitPrice"] = action.TakeProfitPrice
+						}
 					}
-				case "close_long", "close_short":
-					// 移除已平仓记录
-					delete(openPositions, posKey)
 				}
 			}
 		}
+	}
 	}
 
 	// 遍历分析窗口内的记录，生成交易结果
@@ -393,13 +411,15 @@ func (l *DecisionLogger) AnalyzePerformance(lookbackCycles int) (*PerformanceAna
 
 			switch action.Action {
 			case "open_long", "open_short":
-				// 更新开仓记录（可能已经在预填充时记录过了）
+				// 更新开仓记录（可能已经在预填充时记录过了，包括止损止盈价格）
 				openPositions[posKey] = map[string]interface{}{
-					"side":      side,
-					"openPrice": action.Price,
-					"openTime":  action.Timestamp,
-					"quantity":  action.Quantity,
-					"leverage":  action.Leverage,
+					"side":            side,
+					"openPrice":       action.Price,
+					"openTime":        action.Timestamp,
+					"quantity":        action.Quantity,
+					"leverage":        action.Leverage,
+					"stopLossPrice":   action.StopLossPrice,
+					"takeProfitPrice": action.TakeProfitPrice,
 				}
 
 			case "close_long", "close_short":
@@ -410,6 +430,16 @@ func (l *DecisionLogger) AnalyzePerformance(lookbackCycles int) (*PerformanceAna
 					side := openPos["side"].(string)
 					quantity := openPos["quantity"].(float64)
 					leverage := openPos["leverage"].(int)
+
+					// 提取止损止盈价格（如果有）
+					stopLossPrice := 0.0
+					takeProfitPrice := 0.0
+					if val, ok := openPos["stopLossPrice"].(float64); ok {
+						stopLossPrice = val
+					}
+					if val, ok := openPos["takeProfitPrice"].(float64); ok {
+						takeProfitPrice = val
+					}
 
 					// 计算实际盈亏（USDT）
 					// 合约交易 PnL 计算：quantity × 价格差
@@ -431,19 +461,21 @@ func (l *DecisionLogger) AnalyzePerformance(lookbackCycles int) (*PerformanceAna
 
 					// 记录交易结果
 					outcome := TradeOutcome{
-						Symbol:        symbol,
-						Side:          side,
-						Quantity:      quantity,
-						Leverage:      leverage,
-						OpenPrice:     openPrice,
-						ClosePrice:    action.Price,
-						PositionValue: positionValue,
-						MarginUsed:    marginUsed,
-						PnL:           pnl,
-						PnLPct:        pnlPct,
-						Duration:      action.Timestamp.Sub(openTime).String(),
-						OpenTime:      openTime,
-						CloseTime:     action.Timestamp,
+						Symbol:          symbol,
+						Side:            side,
+						Quantity:        quantity,
+						Leverage:        leverage,
+						OpenPrice:       openPrice,
+						ClosePrice:      action.Price,
+						PositionValue:   positionValue,
+						MarginUsed:      marginUsed,
+						PnL:             pnl,
+						PnLPct:          pnlPct,
+						Duration:        action.Timestamp.Sub(openTime).String(),
+						OpenTime:        openTime,
+						CloseTime:       action.Timestamp,
+						StopLossPrice:   stopLossPrice,
+						TakeProfitPrice: takeProfitPrice,
 					}
 
 					analysis.RecentTrades = append(analysis.RecentTrades, outcome)
@@ -476,6 +508,20 @@ func (l *DecisionLogger) AnalyzePerformance(lookbackCycles int) (*PerformanceAna
 
 					// 移除已平仓记录
 					delete(openPositions, posKey)
+				}
+
+			case "hold":
+				// hold 操作可能更新止损止盈价格
+				if action.StopLossPrice > 0 || action.TakeProfitPrice > 0 {
+					if openPos, exists := openPositions[posKey]; exists {
+						// 更新止损止盈价格
+						if action.StopLossPrice > 0 {
+							openPos["stopLossPrice"] = action.StopLossPrice
+						}
+						if action.TakeProfitPrice > 0 {
+							openPos["takeProfitPrice"] = action.TakeProfitPrice
+						}
+					}
 				}
 			}
 		}

@@ -19,6 +19,8 @@ interface TradeOutcome {
   open_time: string;
   close_time: string;
   was_stop_loss: boolean;
+  stop_loss_price: number;
+  take_profit_price: number;
 }
 
 interface SymbolPerformance {
@@ -570,6 +572,28 @@ export default function AILearning({ traderId }: AILearningProps) {
                         </div>
                       </div>
                     </div>
+
+                    {/* 止损止盈价格显示 */}
+                    {(trade.stop_loss_price > 0 || trade.take_profit_price > 0) && (
+                      <div className="grid grid-cols-2 gap-2 mb-3 text-xs">
+                        {trade.stop_loss_price > 0 && (
+                          <div>
+                            <div style={{ color: '#F87171' }}>🛡️ {t('stopLoss', language)}</div>
+                            <div className="font-mono font-semibold" style={{ color: '#FCA5A5' }}>
+                              {trade.stop_loss_price.toFixed(4)}
+                            </div>
+                          </div>
+                        )}
+                        {trade.take_profit_price > 0 && (
+                          <div className={trade.stop_loss_price > 0 ? "text-right" : ""}>
+                            <div style={{ color: '#10B981' }}>🎯 {t('takeProfit', language)}</div>
+                            <div className="font-mono font-semibold" style={{ color: '#34D399' }}>
+                              {trade.take_profit_price.toFixed(4)}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
 
                     {/* Position Details */}
                     <div className="grid grid-cols-2 gap-2 mb-3 text-xs">

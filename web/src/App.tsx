@@ -735,25 +735,45 @@ function DecisionCard({ decision, language }: { decision: DecisionRecord; langua
       {decision.decisions && decision.decisions.length > 0 && (
         <div className="space-y-2 mb-3">
           {decision.decisions.map((action, j) => (
-            <div key={j} className="flex items-center gap-2 text-sm rounded px-3 py-2" style={{ background: '#0B0E11' }}>
-              <span className="font-mono font-bold" style={{ color: '#EAECEF' }}>{action.symbol}</span>
-              <span
-                className="px-2 py-0.5 rounded text-xs font-bold"
-                style={action.action.includes('open')
-                  ? { background: 'rgba(96, 165, 250, 0.1)', color: '#60a5fa' }
-                  : { background: 'rgba(240, 185, 11, 0.1)', color: '#F0B90B' }
-                }
-              >
-                {action.action}
-              </span>
-              {action.leverage > 0 && <span style={{ color: '#F0B90B' }}>{action.leverage}x</span>}
-              {action.price > 0 && (
-                <span className="font-mono text-xs" style={{ color: '#848E9C' }}>@{action.price.toFixed(4)}</span>
+            <div key={j}>
+              <div className="flex items-center gap-2 text-sm rounded-t px-3 py-2" style={{ background: '#0B0E11' }}>
+                <span className="font-mono font-bold" style={{ color: '#EAECEF' }}>{action.symbol}</span>
+                <span
+                  className="px-2 py-0.5 rounded text-xs font-bold"
+                  style={action.action.includes('open')
+                    ? { background: 'rgba(96, 165, 250, 0.1)', color: '#60a5fa' }
+                    : { background: 'rgba(240, 185, 11, 0.1)', color: '#F0B90B' }
+                  }
+                >
+                  {action.action}
+                </span>
+                {action.leverage > 0 && <span style={{ color: '#F0B90B' }}>{action.leverage}x</span>}
+                {action.price > 0 && (
+                  <span className="font-mono text-xs" style={{ color: '#848E9C' }}>@{action.price.toFixed(4)}</span>
+                )}
+                <span style={{ color: action.success ? '#0ECB81' : '#F6465D' }}>
+                  {action.success ? '✓' : '✗'}
+                </span>
+                {action.error && <span className="text-xs ml-2" style={{ color: '#F6465D' }}>{action.error}</span>}
+              </div>
+              {/* 显示止损止盈信息 */}
+              {(action.stop_loss_price > 0 || action.take_profit_price > 0) && (
+                <div className="flex items-center gap-3 text-xs rounded-b px-3 py-1.5" style={{ background: '#0B0E11', borderTop: '1px solid #1E2329' }}>
+                  {action.stop_loss_price > 0 && (
+                    <span style={{ color: '#F87171' }}>
+                      🛡️ SL: <span className="font-mono">{action.stop_loss_price.toFixed(4)}</span>
+                    </span>
+                  )}
+                  {action.take_profit_price > 0 && (
+                    <span style={{ color: '#10B981' }}>
+                      🎯 TP: <span className="font-mono">{action.take_profit_price.toFixed(4)}</span>
+                    </span>
+                  )}
+                  {action.action === 'hold' && (
+                    <span style={{ color: '#F0B90B', fontSize: '10px' }}>✨ 已更新</span>
+                  )}
+                </div>
               )}
-              <span style={{ color: action.success ? '#0ECB81' : '#F6465D' }}>
-                {action.success ? '✓' : '✗'}
-              </span>
-              {action.error && <span className="text-xs ml-2" style={{ color: '#F6465D' }}>{action.error}</span>}
             </div>
           ))}
         </div>

@@ -120,6 +120,7 @@ export const translations = {
     entry: 'Entry',
     exit: 'Exit',
     stopLoss: 'Stop Loss',
+    takeProfit: 'Take Profit',
     latest: 'Latest',
 
     // AI Learning Description
@@ -437,6 +438,7 @@ export const translations = {
     entry: '入场',
     exit: '出场',
     stopLoss: '止损',
+    takeProfit: '止盈',
     latest: '最新',
 
     // AI Learning Description
