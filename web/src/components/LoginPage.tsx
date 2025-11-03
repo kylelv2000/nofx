@@ -147,6 +147,8 @@ export function LoginPage() {
                 </label>
                 <input
                   type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
                   value={otpCode}
                   onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
                   className="w-full px-3 py-2 rounded text-center text-2xl font-mono"
