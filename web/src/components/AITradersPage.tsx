@@ -168,8 +168,10 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
     if (!editingTrader) return;
 
     try {
-      const model = enabledModels?.find(m => m.id === data.ai_model_id);
-      const exchange = enabledExchanges?.find(e => e.id === data.exchange_id);
+      // 编辑模式下，使用 allModels 和 allExchanges 而不是 enabled 列表
+      // 因为交易员可能使用的是已配置但未启用的模型/交易所
+      const model = allModels?.find(m => m.id === data.ai_model_id);
+      const exchange = allExchanges?.find(e => e.id === data.exchange_id);
 
       if (!model) {
         alert(t('modelConfigNotExist', language));
@@ -768,8 +770,8 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
           isOpen={showEditModal}
           isEditMode={true}
           traderData={editingTrader}
-          availableModels={enabledModels}
-          availableExchanges={enabledExchanges}
+          availableModels={allModels}
+          availableExchanges={allExchanges}
           onSave={handleSaveEditTrader}
           onClose={() => {
             setShowEditModal(false);
