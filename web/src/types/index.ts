@@ -49,7 +49,7 @@ export interface DecisionAction {
   order_id: number;
   timestamp: string;
   success: boolean;
-  error: string;
+  error?: string;
   stop_loss_price: number;
   take_profit_price: number;
 }

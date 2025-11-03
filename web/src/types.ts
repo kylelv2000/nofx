@@ -51,6 +51,8 @@ export interface DecisionAction {
   timestamp: string;
   success: boolean;
   error?: string;
+  stop_loss_price?: number;
+  take_profit_price?: number;
 }
 
 export interface AccountSnapshot {

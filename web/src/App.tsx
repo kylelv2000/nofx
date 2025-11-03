@@ -757,16 +757,16 @@ function DecisionCard({ decision, language }: { decision: DecisionRecord; langua
                 {action.error && <span className="text-xs ml-2" style={{ color: '#F6465D' }}>{action.error}</span>}
               </div>
               {/* 显示止损止盈信息 */}
-              {(action.stop_loss_price > 0 || action.take_profit_price > 0) && (
+              {((action.stop_loss_price ?? 0) > 0 || (action.take_profit_price ?? 0) > 0) && (
                 <div className="flex items-center gap-3 text-xs rounded-b px-3 py-1.5" style={{ background: '#0B0E11', borderTop: '1px solid #1E2329' }}>
-                  {action.stop_loss_price > 0 && (
+                  {(action.stop_loss_price ?? 0) > 0 && (
                     <span style={{ color: '#F87171' }}>
-                      🛡️ SL: <span className="font-mono">{action.stop_loss_price.toFixed(4)}</span>
+                      🛡️ SL: <span className="font-mono">{action.stop_loss_price!.toFixed(4)}</span>
                     </span>
                   )}
-                  {action.take_profit_price > 0 && (
+                  {(action.take_profit_price ?? 0) > 0 && (
                     <span style={{ color: '#10B981' }}>
-                      🎯 TP: <span className="font-mono">{action.take_profit_price.toFixed(4)}</span>
+                      🎯 TP: <span className="font-mono">{action.take_profit_price!.toFixed(4)}</span>
                     </span>
                   )}
                   {action.action === 'hold' && (
