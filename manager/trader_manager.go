@@ -412,6 +412,17 @@ func (tm *TraderManager) GetTraderIDs() []string {
 	return ids
 }
 
+// RemoveTrader 从内存中移除交易员
+func (tm *TraderManager) RemoveTrader(traderID string) {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+
+	if _, exists := tm.traders[traderID]; exists {
+		delete(tm.traders, traderID)
+		log.Printf("🗑️  已从内存中移除交易员: %s", traderID)
+	}
+}
+
 // StartAll 启动所有trader
 func (tm *TraderManager) StartAll() {
 	tm.mu.RLock()

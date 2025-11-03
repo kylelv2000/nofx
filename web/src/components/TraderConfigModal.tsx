@@ -72,9 +72,23 @@ export function TraderConfigModal({
       console.log('🎨 scan_interval_minutes:', traderData.scan_interval_minutes);
       console.log('🎨 system_prompt_template:', traderData.system_prompt_template);
       
+      // 处理ai_model字段：可能是简化的provider值，需要找到真实的模型ID
+      let aiModelId = traderData.ai_model;
+      if (availableModels && availableModels.length > 0) {
+        // 优先精确匹配，然后通过provider匹配
+        let matchedModel = availableModels.find(m => m.id === traderData.ai_model);
+        if (!matchedModel) {
+          matchedModel = availableModels.find(m => m.provider === traderData.ai_model);
+        }
+        if (matchedModel) {
+          aiModelId = matchedModel.id;
+        }
+      }
+      
       // 确保旧数据有默认值
       const dataWithDefaults = {
         ...traderData,
+        ai_model: aiModelId,
         scan_interval_minutes: traderData.scan_interval_minutes || 3,
         system_prompt_template: traderData.system_prompt_template || 'default'
       };

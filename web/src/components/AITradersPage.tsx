@@ -168,9 +168,14 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
     if (!editingTrader) return;
 
     try {
-      // 编辑模式下，使用 allModels 和 allExchanges 而不是 enabled 列表
-      // 因为交易员可能使用的是已配置但未启用的模型/交易所
-      const model = allModels?.find(m => m.id === data.ai_model_id);
+      // 编辑模式下，优先精确匹配，然后通过provider匹配
+      // 1. 先尝试精确匹配 id
+      let model = allModels?.find(m => m.id === data.ai_model_id);
+      // 2. 如果找不到，尝试通过 provider 匹配（用于向后兼容简化的ai_model值）
+      if (!model) {
+        model = allModels?.find(m => m.provider === data.ai_model_id);
+      }
+      
       const exchange = allExchanges?.find(e => e.id === data.exchange_id);
 
       if (!model) {
@@ -183,10 +188,11 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
         return;
       }
       
+      // 使用找到的模型的真实ID，而不是简化的provider值
       const request = {
         name: data.name,
-        ai_model_id: data.ai_model_id,
-        exchange_id: data.exchange_id,
+        ai_model_id: model.id,
+        exchange_id: exchange.id,
         initial_balance: data.initial_balance,
         scan_interval_minutes: data.scan_interval_minutes,
         btc_eth_leverage: data.btc_eth_leverage,
