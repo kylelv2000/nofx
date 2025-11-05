@@ -293,18 +293,18 @@ func buildUserPrompt(ctx *Context) string {
 	var sb strings.Builder
 
 	// 系统状态
-	sb.WriteString(fmt.Sprintf("时间: %s | 周期: #%d | 运行: %d分钟\n\n",
+	sb.WriteString(fmt.Sprintf("**时间**: %s | **周期**: #%d | **运行**: %d分钟\n\n",
 		ctx.CurrentTime, ctx.CallCount, ctx.RuntimeMinutes))
 
 	// BTC 市场
 	if btcData, hasBTC := ctx.MarketDataMap["BTCUSDT"]; hasBTC {
-		sb.WriteString(fmt.Sprintf("BTC: %.2f (1h: %+.2f%%, 4h: %+.2f%%) | MACD: %.4f | RSI: %.2f\n\n",
+		sb.WriteString(fmt.Sprintf("**BTC**: %.2f (1h: %+.2f%%, 4h: %+.2f%%) | MACD: %.4f | RSI: %.2f\n\n",
 			btcData.CurrentPrice, btcData.PriceChange1h, btcData.PriceChange4h,
 			btcData.CurrentMACD, btcData.CurrentRSI7))
 	}
 
 	// 账户
-	sb.WriteString(fmt.Sprintf("账户: 净值%.2f | 余额%.2f (%.1f%%) | 盈亏%+.2f%% | 保证金%.1f%% | 持仓%d个\n\n",
+	sb.WriteString(fmt.Sprintf("**账户**: 净值%.2f | 余额%.2f (%.1f%%) | 盈亏%+.2f%% | 保证金%.1f%% | 持仓%d个\n\n",
 		ctx.Account.TotalEquity,
 		ctx.Account.AvailableBalance,
 		(ctx.Account.AvailableBalance/ctx.Account.TotalEquity)*100,
@@ -342,7 +342,7 @@ func buildUserPrompt(ctx *Context) string {
 			}
 		}
 	} else {
-		sb.WriteString("当前持仓: 无\n\n")
+		sb.WriteString("**当前持仓**: 无\n\n")
 	}
 
 	// 候选币种（完整市场数据）
@@ -400,7 +400,7 @@ func parseFullDecisionResponse(aiResponse string, accountEquity float64, btcEthL
 		return &FullDecision{
 			CoTTrace:  cotTrace,
 			Decisions: []Decision{},
-		}, fmt.Errorf("提取决策失败: %w", err)
+		}, fmt.Errorf("提取决策失败: %w\n\n=== AI思维链分析 ===\n%s", err, cotTrace)
 	}
 
 	// 3. 验证决策
@@ -408,7 +408,7 @@ func parseFullDecisionResponse(aiResponse string, accountEquity float64, btcEthL
 		return &FullDecision{
 			CoTTrace:  cotTrace,
 			Decisions: decisions,
-		}, fmt.Errorf("决策验证失败: %w", err)
+		}, fmt.Errorf("决策验证失败: %w\n\n=== AI思维链分析 ===\n%s", err, cotTrace)
 	}
 
 	return &FullDecision{
