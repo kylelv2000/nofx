@@ -96,9 +96,12 @@ type AutoTrader struct {
 	lastResetTime         time.Time
 	stopUntil             time.Time
 	isRunning             bool
-	startTime             time.Time        // 系统启动时间
-	callCount             int              // AI调用次数
-	positionFirstSeenTime map[string]int64 // 持仓首次出现时间 (symbol_side -> timestamp毫秒)
+	startTime             time.Time          // 系统启动时间
+	callCount             int                // AI调用次数
+	positionFirstSeenTime map[string]int64   // 持仓首次出现时间 (symbol_side -> timestamp毫秒)
+	profitLevelState      map[string]int     // 浮盈管理级别状态 (symbol_side -> level: 0=未触发, 1=第一级, 2=第二级, 3=第三级)
+	currentStopLoss       map[string]float64 // 当前止损价格 (symbol_side -> price)
+	currentTakeProfit     map[string]float64 // 当前止盈价格 (symbol_side -> price)
 }
 
 // NewAutoTrader 创建自动交易器
@@ -217,6 +220,9 @@ func NewAutoTrader(config AutoTraderConfig) (*AutoTrader, error) {
 		callCount:             0,
 		isRunning:             false,
 		positionFirstSeenTime: make(map[string]int64),
+		profitLevelState:      make(map[string]int),
+		currentStopLoss:       make(map[string]float64),
+		currentTakeProfit:     make(map[string]float64),
 	}, nil
 }
 
@@ -467,6 +473,11 @@ func (at *AutoTrader) buildTradingContext() (*decision_pkg.Context, error) {
 		return nil, fmt.Errorf("获取持仓失败: %w", err)
 	}
 
+	// 🔍 实时浮盈管理检查（每次获取持仓后立即检查）
+	if err := at.checkAndApplyProfitManagement(positions); err != nil {
+		log.Printf("⚠️ 浮盈管理检查失败: %v", err)
+	}
+
 	var positionInfos []decision_pkg.PositionInfo
 	totalMarginUsed := 0.0
 
@@ -529,6 +540,9 @@ func (at *AutoTrader) buildTradingContext() (*decision_pkg.Context, error) {
 	for key := range at.positionFirstSeenTime {
 		if !currentPositionKeys[key] {
 			delete(at.positionFirstSeenTime, key)
+			delete(at.profitLevelState, key) // 同时清理浮盈级别状态
+			delete(at.currentStopLoss, key)
+			delete(at.currentTakeProfit, key)
 		}
 	}
 
@@ -670,9 +684,13 @@ func (at *AutoTrader) executeOpenLongWithRecord(decision *decision_pkg.Decision,
 		// 提交到交易所
 		if err := at.trader.SetStopLoss(decision.Symbol, "LONG", quantity, decision.StopLoss); err != nil {
 			log.Printf("  ⚠ 设置止损失败: %v", err)
+		} else {
+			at.currentStopLoss[posKey] = decision.StopLoss // 记录当前止损
 		}
 		if err := at.trader.SetTakeProfit(decision.Symbol, "LONG", quantity, decision.TakeProfit); err != nil {
 			log.Printf("  ⚠ 设置止盈失败: %v", err)
+		} else {
+			at.currentTakeProfit[posKey] = decision.TakeProfit // 记录当前止盈
 		}
 	} else {
 		log.Printf("  ⚠️ 未设置止损止盈")
@@ -746,9 +764,13 @@ func (at *AutoTrader) executeOpenShortWithRecord(decision *decision_pkg.Decision
 		// 提交到交易所
 		if err := at.trader.SetStopLoss(decision.Symbol, "SHORT", quantity, decision.StopLoss); err != nil {
 			log.Printf("  ⚠ 设置止损失败: %v", err)
+		} else {
+			at.currentStopLoss[posKey] = decision.StopLoss // 记录当前止损
 		}
 		if err := at.trader.SetTakeProfit(decision.Symbol, "SHORT", quantity, decision.TakeProfit); err != nil {
 			log.Printf("  ⚠ 设置止盈失败: %v", err)
+		} else {
+			at.currentTakeProfit[posKey] = decision.TakeProfit // 记录当前止盈
 		}
 	} else {
 		log.Printf("  ⚠️ 未设置止损止盈")
@@ -809,15 +831,121 @@ func (at *AutoTrader) executeCloseShortWithRecord(decision *decision_pkg.Decisio
 	return nil
 }
 
+// checkAndApplyProfitManagement 实时检查所有持仓的浮盈管理（独立于LLM决策）
+func (at *AutoTrader) checkAndApplyProfitManagement(positions []map[string]interface{}) error {
+	if len(positions) == 0 {
+		return nil
+	}
+
+	for _, pos := range positions {
+		symbol := pos["symbol"].(string)
+		positionSide := pos["side"].(string)
+		quantity := pos["positionAmt"].(float64)
+		entryPrice := pos["entryPrice"].(float64)
+		markPrice := pos["markPrice"].(float64)
+
+		if quantity < 0 {
+			quantity = -quantity
+		}
+
+		// 计算浮盈百分比
+		profitPct := 0.0
+		if positionSide == "long" {
+			profitPct = ((markPrice - entryPrice) / entryPrice) * 100
+		} else {
+			profitPct = ((entryPrice - markPrice) / entryPrice) * 100
+		}
+
+		// 获取当前持仓的浮盈级别状态
+		posKey := symbol + "_" + positionSide
+		currentLevel := at.profitLevelState[posKey]
+
+		needUpdate := false
+		var newStopLoss float64
+
+		if profitPct > 8.0 && currentLevel < 3 {
+			// 第三层：浮盈>8%，部分平仓锁定收益（仅触发一次）
+			log.Printf("  💰 [三级管理] %s 浮盈%.2f%% > 8%%，执行部分平仓（仅此一次）", symbol, profitPct)
+			closeQty := quantity * 0.5
+			if positionSide == "long" {
+				if _, err := at.trader.CloseLong(symbol, closeQty); err != nil {
+					log.Printf("  ⚠️ 部分平多仓失败: %v", err)
+				} else {
+					log.Printf("  ✓ 已平仓50%%锁定收益")
+					quantity = quantity * 0.5
+					at.profitLevelState[posKey] = 3
+				}
+			} else {
+				if _, err := at.trader.CloseShort(symbol, closeQty); err != nil {
+					log.Printf("  ⚠️ 部分平空仓失败: %v", err)
+				} else {
+					log.Printf("  ✓ 已平仓50%%锁定收益")
+					quantity = quantity * 0.5
+					at.profitLevelState[posKey] = 3
+				}
+			}
+			// 第三层同时启用追踪止盈
+			if positionSide == "long" {
+				newStopLoss = markPrice * 0.97
+			} else {
+				newStopLoss = markPrice * 1.03
+			}
+			needUpdate = true
+		} else if profitPct > 5.0 && currentLevel < 2 {
+			// 第二层：浮盈>5%，启用追踪止盈（持续更新）
+			log.Printf("  📈 [二级管理] %s 浮盈%.2f%% > 5%%，启用追踪止盈", symbol, profitPct)
+			if positionSide == "long" {
+				newStopLoss = markPrice * 0.97
+			} else {
+				newStopLoss = markPrice * 1.03
+			}
+			at.profitLevelState[posKey] = 2
+			needUpdate = true
+		} else if profitPct > 3.0 && currentLevel < 1 {
+			// 第一层：浮盈>3%，止损上调至开仓价（仅触发一次）
+			log.Printf("  🛡️ [一级管理] %s 浮盈%.2f%% > 3%%，止损上调至开仓价", symbol, profitPct)
+			newStopLoss = entryPrice
+			at.profitLevelState[posKey] = 1
+			needUpdate = true
+		} else if currentLevel == 2 && profitPct > 5.0 {
+			// 已在第二层，持续更新追踪止盈
+			if positionSide == "long" {
+				newStopLoss = markPrice * 0.97
+			} else {
+				newStopLoss = markPrice * 1.03
+			}
+			needUpdate = true
+		}
+
+		if needUpdate && newStopLoss > 0 {
+			// 取消旧订单
+			if err := at.trader.CancelAllOrders(symbol); err != nil {
+				log.Printf("  ⚠️ 取消旧委托单失败: %v", err)
+			}
+
+			// 设置新止损
+			positionSideUpper := strings.ToUpper(positionSide)
+			if err := at.trader.SetStopLoss(symbol, positionSideUpper, quantity, newStopLoss); err != nil {
+				log.Printf("  ⚠️ 设置止损失败: %v", err)
+			} else {
+				log.Printf("  ✓ 止损已更新: %.4f", newStopLoss)
+				at.currentStopLoss[posKey] = newStopLoss // 更新状态记录
+			}
+		}
+	}
+
+	return nil
+}
+
 // executeHoldWithRecord 执行持仓决策并更新止盈止损（如果LLM提供了新值）
 func (at *AutoTrader) executeHoldWithRecord(decision *decision_pkg.Decision, actionRecord *logger.DecisionAction) error {
 	// 检查LLM是否提供了止盈止损更新
 	if decision.StopLoss <= 0 && decision.TakeProfit <= 0 {
-		// LLM没有提供止盈止损，保持原样
+		// LLM没有提供止盈止损，保持原样（浮盈管理已在checkAndApplyProfitManagement中处理）
 		return nil
 	}
 
-	log.Printf("  🔄 更新止盈止损: %s", decision.Symbol)
+	log.Printf("  🔄 LLM更新止盈止损: %s", decision.Symbol)
 
 	// 获取当前价格
 	marketData, err := market.Get(decision.Symbol)
@@ -848,7 +976,7 @@ func (at *AutoTrader) executeHoldWithRecord(decision *decision_pkg.Decision, act
 			positionSide = pos["side"].(string)
 			quantity = pos["positionAmt"].(float64)
 			if quantity < 0 {
-				quantity = -quantity // 空仓数量为负，转为正数
+				quantity = -quantity
 			}
 			found = true
 			break
@@ -860,28 +988,60 @@ func (at *AutoTrader) executeHoldWithRecord(decision *decision_pkg.Decision, act
 		return nil
 	}
 
-	// 先取消旧的止盈止损单
+	// 获取当前止盈止损（从状态记录）
+	posKey := decision.Symbol + "_" + positionSide
+	currentStopLoss := at.currentStopLoss[posKey]
+	currentTakeProfit := at.currentTakeProfit[posKey]
+
+	// 验证止损止盈更新规则：止损只能上调，止盈只能下调
+	newStopLoss := decision.StopLoss
+	newTakeProfit := decision.TakeProfit
+
+	if positionSide == "long" {
+		// 多仓：止损只能上调（变大），止盈只能下调（变小）
+		if currentStopLoss > 0 && newStopLoss < currentStopLoss {
+			log.Printf("  ⚠️ 多仓止损不能下调：当前%.4f，新值%.4f，保持原值", currentStopLoss, newStopLoss)
+			newStopLoss = currentStopLoss
+		}
+		if currentTakeProfit > 0 && newTakeProfit > currentTakeProfit {
+			log.Printf("  ⚠️ 多仓止盈不能上调：当前%.4f，新值%.4f，保持原值", currentTakeProfit, newTakeProfit)
+			newTakeProfit = currentTakeProfit
+		}
+	} else {
+		// 空仓：止损只能下调（变小），止盈只能上调（变大）
+		if currentStopLoss > 0 && newStopLoss > currentStopLoss {
+			log.Printf("  ⚠️ 空仓止损不能上调：当前%.4f，新值%.4f，保持原值", currentStopLoss, newStopLoss)
+			newStopLoss = currentStopLoss
+		}
+		if currentTakeProfit > 0 && newTakeProfit < currentTakeProfit {
+			log.Printf("  ⚠️ 空仓止盈不能下调：当前%.4f，新值%.4f，保持原值", currentTakeProfit, newTakeProfit)
+			newTakeProfit = currentTakeProfit
+		}
+	}
+
+	// 取消旧的止盈止损单
 	log.Printf("  🗑️ 取消旧的止盈止损单...")
 	if err := at.trader.CancelAllOrders(decision.Symbol); err != nil {
 		log.Printf("  ⚠️ 取消旧委托单失败: %v", err)
-		// 继续执行，尝试设置新的
 	}
 
 	// 设置新的止盈止损
-	actionRecord.StopLossPrice = decision.StopLoss
-	actionRecord.TakeProfitPrice = decision.TakeProfit
+	actionRecord.StopLossPrice = newStopLoss
+	actionRecord.TakeProfitPrice = newTakeProfit
 
 	positionSideUpper := strings.ToUpper(positionSide)
-	if err := at.trader.SetStopLoss(decision.Symbol, positionSideUpper, quantity, decision.StopLoss); err != nil {
+	if err := at.trader.SetStopLoss(decision.Symbol, positionSideUpper, quantity, newStopLoss); err != nil {
 		log.Printf("  ⚠️ 设置止损失败: %v", err)
 	} else {
-		log.Printf("  ✓ 止损已更新: %.4f", decision.StopLoss)
+		log.Printf("  ✓ 止损已更新: %.4f", newStopLoss)
+		at.currentStopLoss[posKey] = newStopLoss // 更新状态记录
 	}
 
-	if err := at.trader.SetTakeProfit(decision.Symbol, positionSideUpper, quantity, decision.TakeProfit); err != nil {
+	if err := at.trader.SetTakeProfit(decision.Symbol, positionSideUpper, quantity, newTakeProfit); err != nil {
 		log.Printf("  ⚠️ 设置止盈失败: %v", err)
 	} else {
-		log.Printf("  ✓ 止盈已更新: %.4f", decision.TakeProfit)
+		log.Printf("  ✓ 止盈已更新: %.4f", newTakeProfit)
+		at.currentTakeProfit[posKey] = newTakeProfit // 更新状态记录
 	}
 
 	return nil
